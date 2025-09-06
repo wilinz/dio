@@ -54,11 +54,13 @@ void main() {
     () async {
       final dio = Dio()
         ..options.baseUrl = httpbunBaseUrl
-        ..httpClientAdapter = Http2Adapter(ConnectionManager(
-          idleTimeout: Duration(milliseconds: 10),
-          onClientCreate: (uri, settings) =>
-              settings.proxy = Uri.parse('http://localhost:3128'),
-        ));
+        ..httpClientAdapter = Http2Adapter(
+          ConnectionManager(
+            idleTimeout: const Duration(milliseconds: 10),
+            onClientCreate: (uri, settings) =>
+                settings.proxy = Uri.parse('http://localhost:3128'),
+          ),
+        );
 
       final res = await dio.post('/post', data: 'TEST');
       expect(res.data.toString(), contains('TEST'));
@@ -70,19 +72,21 @@ void main() {
     bool needProxy = true;
     final dio = Dio()
       ..options.baseUrl = httpbunBaseUrl
-      ..httpClientAdapter = Http2Adapter(ConnectionManager(
-        idleTimeout: Duration(milliseconds: 10),
-        onClientCreate: (uri, settings) {
-          if (needProxy) {
-            // first request use bad proxy to simulate network error
-            settings.proxy = Uri.parse('http://localhost:1234');
-            needProxy = false;
-          } else {
-            // remove proxy to restore network
-            settings.proxy = null;
-          }
-        },
-      ));
+      ..httpClientAdapter = Http2Adapter(
+        ConnectionManager(
+          idleTimeout: const Duration(milliseconds: 10),
+          onClientCreate: (uri, settings) {
+            if (needProxy) {
+              // first request use bad proxy to simulate network error
+              settings.proxy = Uri.parse('http://localhost:1234');
+              needProxy = false;
+            } else {
+              // remove proxy to restore network
+              settings.proxy = null;
+            }
+          },
+        ),
+      );
     try {
       // will throw SocketException
       await dio.post('/post', data: 'TEST');
@@ -91,6 +95,58 @@ void main() {
     }
     final res = await dio.post('/post', data: 'TEST');
     expect(res.data.toString(), contains('TEST'));
+  });
+
+  group(ConnectionManager, () {
+    test('returns correct connection', () async {
+      final manager = ConnectionManager();
+      final tlsConnection = await manager.getConnection(
+        RequestOptions(path: 'https://flutter.cn'),
+        [],
+      );
+      final tlsWithSameHostRedirects = await manager.getConnection(
+        RequestOptions(path: 'https://flutter.cn'),
+        [
+          RedirectRecord(301, 'GET', Uri.parse('https://flutter.cn/404')),
+        ],
+      );
+      final tlsDifferentHostRedirects = await manager.getConnection(
+        RequestOptions(path: 'https://flutter.cn'),
+        [
+          RedirectRecord(301, 'GET', Uri.parse('https://flutter.dev')),
+        ],
+      );
+      final tlsDifferentHostsRedirects = await manager.getConnection(
+        RequestOptions(path: 'https://flutter.cn'),
+        [
+          RedirectRecord(301, 'GET', Uri.parse('https://flutter.dev')),
+          RedirectRecord(301, 'GET', Uri.parse('https://flutter.dev/404')),
+        ],
+      );
+      final nonTLSConnection = await manager.getConnection(
+        RequestOptions(path: 'http://flutter.cn'),
+        [],
+      );
+      final nonTLSConnectionWithTLSRedirects = await manager.getConnection(
+        RequestOptions(path: 'http://flutter.cn'),
+        [
+          RedirectRecord(301, 'GET', Uri.parse('https://flutter.cn/')),
+        ],
+      );
+      final differentHostConnection = await manager.getConnection(
+        RequestOptions(path: 'https://flutter.dev'),
+        [],
+      );
+      expect(tlsConnection == tlsWithSameHostRedirects, true);
+      expect(tlsConnection == tlsDifferentHostRedirects, false);
+      expect(tlsConnection == tlsDifferentHostsRedirects, false);
+      expect(tlsConnection == nonTLSConnection, false);
+      expect(tlsConnection == nonTLSConnectionWithTLSRedirects, true);
+      expect(tlsConnection == differentHostConnection, false);
+      expect(tlsDifferentHostRedirects == differentHostConnection, true);
+      expect(tlsDifferentHostsRedirects == differentHostConnection, true);
+      expect(nonTLSConnection == nonTLSConnectionWithTLSRedirects, false);
+    });
   });
 
   group(ProxyConnectedPredicate, () {

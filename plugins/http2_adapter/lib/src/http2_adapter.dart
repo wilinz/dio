@@ -6,7 +6,6 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:http2/http2.dart';
-import 'package:meta/meta.dart';
 
 part 'client_setting.dart';
 
@@ -45,19 +44,29 @@ class Http2Adapter implements HttpClientAdapter {
     RequestOptions options,
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
-  ) async {
+  ) {
     // Recursive fetching.
     final redirects = <RedirectRecord>[];
+    return _fetch(options, requestStream, cancelFuture, redirects);
+  }
+
+  Future<ResponseBody> _fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+    List<RedirectRecord> redirects,
+  ) async {
+    late final ClientTransportConnection transport;
     try {
-      return await _fetch(options, requestStream, cancelFuture, redirects);
+      transport = await connectionManager.getConnection(options, redirects);
     } on DioH2NotSupportedException catch (e) {
       // Fallback to use the callback
       // or to another adapter (typically IOHttpClientAdapter)
       // since the request can have a better handle by it.
       if (onNotSupported != null) {
-        return await onNotSupported!(options, requestStream, cancelFuture, e);
+        return onNotSupported!(options, requestStream, cancelFuture, e);
       }
-      return await fallbackAdapter.fetch(options, requestStream, cancelFuture);
+      return fallbackAdapter.fetch(options, requestStream, cancelFuture);
     } on SocketException catch (e) {
       if (e.message.contains('timed out')) {
         final Duration effectiveTimeout;
@@ -79,15 +88,7 @@ class Http2Adapter implements HttpClientAdapter {
         error: e,
       );
     }
-  }
 
-  Future<ResponseBody> _fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-    List<RedirectRecord> redirects,
-  ) async {
-    final transport = await connectionManager.getConnection(options);
     final uri = options.uri;
     String path = uri.path;
     const excludeMethods = ['PUT', 'POST', 'PATCH'];
@@ -122,11 +123,12 @@ class Http2Adapter implements HttpClientAdapter {
 
     // Creates a new outgoing stream.
     final stream = transport.makeRequest(headers);
+    final streamWR = WeakReference<ClientTransportStream>(stream);
 
     final hasRequestData = requestStream != null;
-    if (hasRequestData) {
-      cancelFuture?.whenComplete(() {
-        stream.outgoingMessages.close();
+    if (hasRequestData && cancelFuture != null) {
+      cancelFuture.whenComplete(() {
+        streamWR.target?.outgoingMessages.close();
       });
     }
 
@@ -250,14 +252,8 @@ class Http2Adapter implements HttpClientAdapter {
       final url = responseHeaders.value('location');
       // An empty `location` header is considered a self redirect.
       final uri = Uri.parse(url ?? '');
-      redirects.add(
-        RedirectRecord(
-          statusCode,
-          options.method,
-          uri,
-        ),
-      );
-      final String path = resolveRedirectUri(options.uri, uri);
+      redirects.add(RedirectRecord(statusCode, options.method, uri));
+      final String path = resolveRedirectUri(options.uri, uri).toString();
       return _fetch(
         options.copyWith(
           path: path,
@@ -277,7 +273,7 @@ class Http2Adapter implements HttpClientAdapter {
       onClose: () {
         responseSubscription.cancel();
         responseSink.close();
-        stream.outgoingMessages.close();
+        streamWR.target?.outgoingMessages.close();
       },
     );
   }
@@ -289,16 +285,15 @@ class Http2Adapter implements HttpClientAdapter {
         statusCodes.contains(status);
   }
 
-  @visibleForTesting
-  static String resolveRedirectUri(Uri currentUri, Uri redirectUri) {
+  static Uri resolveRedirectUri(Uri currentUri, Uri redirectUri) {
     if (redirectUri.hasScheme) {
-      /// This is a full URL which has to be redirected to as is.
-      return redirectUri.toString();
+      // This is a full URL which has to be redirected to as is.
+      return redirectUri;
     }
 
-    /// This is relative with or without leading slash and is
-    /// resolved against the URL of the original request.
-    return currentUri.resolveUri(redirectUri).toString();
+    // This is relative with or without leading slash and is resolved against
+    // the URL of the original request.
+    return currentUri.resolveUri(redirectUri);
   }
 
   @override
@@ -307,8 +302,7 @@ class Http2Adapter implements HttpClientAdapter {
   }
 }
 
-/// The exception when a connected socket for the [uri]
-/// does not support HTTP/2.
+/// The exception when a connected socket for the [uri] does not support HTTP/2.
 class DioH2NotSupportedException extends SocketException {
   const DioH2NotSupportedException(
     this.uri,

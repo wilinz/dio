@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:dio_test/tests.dart';
+import '../../tests.dart';
 
 typedef TestSuiteFunction = void Function(
   Dio Function(String baseUrl) create,
@@ -23,5 +23,8 @@ const _tests = [
 void dioAdapterTestSuite(
   Dio Function(String baseUrl) create, {
   List<TestSuiteFunction> tests = _tests,
-}) =>
-    tests.forEach((test) => test(create));
+}) {
+  for (final test in tests) {
+    test(create);
+  }
+}

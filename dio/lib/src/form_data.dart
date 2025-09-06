@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
+import 'dart:typed_data' show Uint8List;
 
 import 'multipart_file.dart';
 import 'options.dart';
@@ -74,7 +74,7 @@ class FormData {
   ///
   /// See also: https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
   String get boundary => _boundary;
-  late final String _boundary;
+  late String _boundary;
 
   /// The form fields to send for this request.
   final fields = <MapEntry<String, String>>[];
@@ -188,7 +188,7 @@ class FormData {
       for (final file in files) {
         writeUtf8('--$boundary$_rn');
         writeUtf8(_headerForFile(file));
-        await writeStreamToSink(file.value.finalize(), controller);
+        await writeStreamToSink<Uint8List>(file.value.finalize(), controller);
         writeLine();
       }
     }).then((_) {
@@ -210,6 +210,7 @@ class FormData {
   // Convenience method to clone finalized FormData when retrying requests.
   FormData clone() {
     final clone = FormData();
+    clone._boundary = _boundary;
     clone.fields.addAll(fields);
     for (final file in files) {
       clone.files.add(MapEntry(file.key, file.value.clone()));

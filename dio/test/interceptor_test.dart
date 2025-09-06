@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:dio/src/dio_mixin.dart';
 import 'package:dio/src/interceptors/imply_content_type.dart';
 import 'package:test/test.dart';
 
@@ -83,6 +84,20 @@ void main() {
         ]),
       ),
     );
+  });
+
+  group('InterceptorState', () {
+    test('toString()', () {
+      final data = DioException(requestOptions: RequestOptions());
+      final state = InterceptorState<DioException>(data);
+      expect(
+        state.toString(),
+        'InterceptorState<DioException>('
+        'type: InterceptorResultType.next, '
+        'data: DioException [unknown]: null'
+        ')',
+      );
+    });
   });
 
   group('Request Interceptor', () {
@@ -476,7 +491,7 @@ void main() {
           '/echo',
           data: [
             {'hello': 'here'},
-            {'hello': 'there'}
+            {'hello': 'there'},
           ],
         );
         expect(response.requestOptions.contentType, 'application/json');
@@ -666,13 +681,15 @@ void main() {
 
       int result = 0;
       void onResult(d) {
-        if (tokenRequestCounts > 0) ++result;
+        if (tokenRequestCounts > 0) {
+          ++result;
+        }
       }
 
       await Future.wait([
         dio.get('/test?tag=1').then(onResult),
         dio.get('/test?tag=2').then(onResult),
-        dio.get('/test?tag=3').then(onResult)
+        dio.get('/test?tag=3').then(onResult),
       ]);
       expect(tokenRequestCounts, 1);
       expect(result, 3);
@@ -733,13 +750,15 @@ void main() {
 
       int result = 0;
       void onResult(d) {
-        if (tokenRequestCounts > 0) ++result;
+        if (tokenRequestCounts > 0) {
+          ++result;
+        }
       }
 
       await Future.wait([
         dio.get('/test-auth?tag=1').then(onResult),
         dio.get('/test-auth?tag=2').then(onResult),
-        dio.get('/test-auth?tag=3').then(onResult)
+        dio.get('/test-auth?tag=3').then(onResult),
       ]);
       expect(tokenRequestCounts, 1);
       expect(result, 3);
@@ -747,17 +766,25 @@ void main() {
   });
 
   test('Size of Interceptors', () {
-    final interceptors = Dio().interceptors;
-    expect(interceptors.length, equals(1));
-    expect(interceptors, isNotEmpty);
-    interceptors.add(InterceptorsWrapper());
-    expect(interceptors.length, equals(2));
-    expect(interceptors, isNotEmpty);
-    interceptors.clear();
-    expect(interceptors.length, equals(1));
-    expect(interceptors.single, isA<ImplyContentTypeInterceptor>());
-    interceptors.clear(keepImplyContentTypeInterceptor: false);
-    expect(interceptors.length, equals(0));
-    expect(interceptors, isEmpty);
+    final interceptors1 = Dio().interceptors;
+    expect(interceptors1.length, equals(1));
+    expect(interceptors1, isNotEmpty);
+    interceptors1.add(InterceptorsWrapper());
+    expect(interceptors1.length, equals(2));
+    expect(interceptors1, isNotEmpty);
+    interceptors1.clear();
+    expect(interceptors1.length, equals(1));
+    expect(interceptors1.single, isA<ImplyContentTypeInterceptor>());
+    interceptors1.clear(keepImplyContentTypeInterceptor: false);
+    expect(interceptors1.length, equals(0));
+    expect(interceptors1, isEmpty);
+
+    final interceptors2 = Interceptors()..add(LogInterceptor());
+    expect(interceptors2.length, equals(2));
+    expect(interceptors2.last, isA<LogInterceptor>());
+
+    final interceptors3 = Interceptors(initialInterceptors: [LogInterceptor()]);
+    expect(interceptors3.length, equals(2));
+    expect(interceptors2.last, isA<LogInterceptor>());
   });
 }

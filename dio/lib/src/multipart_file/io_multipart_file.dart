@@ -1,15 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:http_parser/http_parser.dart';
 import 'package:path/path.dart' as p;
 
-import '../multipart_file.dart';
+import '../multipart_file.dart' show MultipartFile, DioMediaType;
 
 Future<MultipartFile> multipartFileFromPath(
   String filePath, {
   String? filename,
-  MediaType? contentType,
+  DioMediaType? contentType,
   final Map<String, List<String>>? headers,
 }) async {
   filename ??= p.basename(filePath);
@@ -27,7 +26,7 @@ Future<MultipartFile> multipartFileFromPath(
 MultipartFile multipartFileFromPathSync(
   String filePath, {
   String? filename,
-  MediaType? contentType,
+  DioMediaType? contentType,
   final Map<String, List<String>>? headers,
 }) {
   filename ??= p.basename(filePath);

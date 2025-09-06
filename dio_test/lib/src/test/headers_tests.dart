@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
-import 'package:dio_test/util.dart';
 import 'package:test/test.dart';
+
+import '../../util.dart';
 
 void headerTests(
   Dio Function(String baseUrl) create,
@@ -122,7 +123,7 @@ void headerTests(
           contentType: Headers.textPlainContentType,
           // Rather than this.
           headers: {
-            Headers.contentTypeHeader: Headers.formUrlEncodedContentType
+            Headers.contentTypeHeader: Headers.formUrlEncodedContentType,
           },
         ),
       );

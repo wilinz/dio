@@ -1,6 +1,6 @@
 part of 'dio_mixin.dart';
 
-/// @nodoc
+/// The result type after handled by the interceptor.
 enum InterceptorResultType {
   next,
   resolve,
@@ -10,12 +10,14 @@ enum InterceptorResultType {
 }
 
 /// Used to pass state between interceptors.
-/// @nodoc
 class InterceptorState<T> {
   const InterceptorState(this.data, [this.type = InterceptorResultType.next]);
 
   final T data;
   final InterceptorResultType type;
+
+  @override
+  String toString() => 'InterceptorState<$T>(type: $type, data: $data)';
 }
 
 abstract class _BaseHandler {
@@ -318,6 +320,12 @@ class InterceptorsWrapper extends Interceptor with _InterceptorWrapperMixin {
 ///
 /// Interceptors will be executed with FIFO.
 class Interceptors extends ListMixin<Interceptor> {
+  Interceptors({
+    List<Interceptor> initialInterceptors = const <Interceptor>[],
+  }) {
+    addAll(initialInterceptors);
+  }
+
   /// Define a nullable list to be capable with growable elements.
   final List<Interceptor?> _list = [const ImplyContentTypeInterceptor()];
 
@@ -372,7 +380,9 @@ class _TaskQueue<T, V extends _BaseHandler> {
 
 /// [Interceptor] in queue.
 ///
-/// Concurrent requests will be added to the queue for interceptors.
+/// `onRequest`, `onResponse`, and `onError` are processed in separate queues
+/// when running concurrent requests. These queues run in parallel,
+/// new requests can be initiated before previous have been completed.
 class QueuedInterceptor extends Interceptor {
   final _requestQueue = _TaskQueue<RequestOptions, RequestInterceptorHandler>();
   final _responseQueue = _TaskQueue<Response, ResponseInterceptorHandler>();
@@ -428,7 +438,7 @@ class QueuedInterceptor extends Interceptor {
   }
 }
 
-/// A helper class to create queued-interceptors in ease.
+/// A helper class to create [QueuedInterceptor] in ease.
 ///
 /// See also:
 ///  - [InterceptorsWrapper], creates [Interceptor]s in ease.

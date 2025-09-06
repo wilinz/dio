@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+*None.*
+
+## 3.3.0
+
+- Proceed better `DioException`s from the cookie manager.
+  Now `CookieManagerLoadException` and `CookieManagerSaveException` are including in the `DioException`.
+- Expose `loadCookies` and `saveCookies` for `CookieManager`.
+
+## 3.2.0
+
 - Raise the min Dart SDK version to 2.18.0 (implied by the `dio` package).
 
 ## 3.1.1
