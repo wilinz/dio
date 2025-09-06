@@ -24,8 +24,9 @@ final _setCookieReg = RegExp('(?<=)(,)(?=[^;]+?=)');
 /// Cookie manager for HTTP requests based on [CookieJar].
 class CookieManager extends Interceptor {
   const CookieManager(
-    this.cookieJar,
-  ) : assert(!_kIsWeb, "Don't use the manager in Web environments.");
+    this.cookieJar, {
+    this.separateHeaders = false,
+  }) : assert(!_kIsWeb, "Don't use the manager in Web environments.");
 
   /// The cookie jar used to load and save cookies.
   ///
@@ -33,6 +34,10 @@ class CookieManager extends Interceptor {
   /// * [CookieJar]
   /// * [PersistCookieJar]
   final CookieJar cookieJar;
+
+  /// If true, each cookie will be set as a separate Cookie header.
+  /// If false (default), all cookies will be combined into a single Cookie header.
+  final bool separateHeaders;
 
   /// Merge cookies into a Cookie string.
   /// Cookies with longer paths are listed before cookies with shorter paths.
@@ -58,9 +63,19 @@ class CookieManager extends Interceptor {
     RequestInterceptorHandler handler,
   ) async {
     try {
-      final cookies = await loadCookies(options);
-      options.headers[HttpHeaders.cookieHeader] =
-          cookies.isNotEmpty ? cookies : null;
+      if (separateHeaders) {
+        final cookies = await loadCookiesAsList(options);
+        if (cookies.isNotEmpty) {
+          final cookieValues = cookies
+              .map((cookie) => '${cookie.name}=${cookie.value}')
+              .toList();
+          options.headers[HttpHeaders.cookieHeader] = cookieValues;
+        }
+      } else {
+        final cookies = await loadCookies(options);
+        options.headers[HttpHeaders.cookieHeader] =
+            cookies.isNotEmpty ? cookies : null;
+      }
       handler.next(options);
     } catch (e, s) {
       final exception = DioException(
@@ -131,16 +146,36 @@ class CookieManager extends Interceptor {
 
   /// Load cookies in cookie string for the request.
   Future<String> loadCookies(RequestOptions options) async {
+    final cookies = await loadCookiesAsList(options);
+    return getCookies(cookies);
+  }
+
+  /// Load cookies as a list for the request.
+  Future<List<Cookie>> loadCookiesAsList(RequestOptions options) async {
     final savedCookies = await cookieJar.loadForRequest(options.uri);
     final previousCookies =
         options.headers[HttpHeaders.cookieHeader] as String?;
-    final cookies = getCookies([
+    final cookies = [
       ...?previousCookies
           ?.split(';')
           .where((e) => e.isNotEmpty)
           .map((c) => Cookie.fromSetCookieValue(c)),
       ...savedCookies,
-    ]);
+    ];
+    
+    // Sort cookies by path (longer path first).
+    cookies.sort((a, b) {
+      if (a.path == null && b.path == null) {
+        return 0;
+      } else if (a.path == null) {
+        return -1;
+      } else if (b.path == null) {
+        return 1;
+      } else {
+        return b.path!.length.compareTo(a.path!.length);
+      }
+    });
+    
     return cookies;
   }
 
