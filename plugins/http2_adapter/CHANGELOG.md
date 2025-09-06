@@ -1,8 +1,19 @@
 # CHANGELOG
 
+**Before you upgrade: Breaking changes might happen in major and minor versions of packages.<br/>
+See the [Migration Guide][] for the complete breaking changes list.**
+
 ## Unreleased
 
 *None.*
+
+## 2.6.0
+
+- Make cached connections respect redirections and scheme.
+
+## 2.5.3
+
+- Improves memory allocating when using `CancelToken`.
 
 ## 2.5.2
 
@@ -76,3 +87,5 @@
 ## 0.0.2 - 2019.9.17
 
 - A Dio HttpAdapter which support Http/2.0.
+
+[Migration Guide]: doc/migration_guide.md

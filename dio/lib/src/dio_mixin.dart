@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:async/async.dart';
 import 'package:meta/meta.dart';
 
 import 'adapter.dart';
@@ -14,13 +15,12 @@ import 'form_data.dart';
 import 'headers.dart';
 import 'interceptors/imply_content_type.dart';
 import 'options.dart';
+import 'progress_stream/io_progress_stream.dart'
+    if (dart.library.js_interop) 'progress_stream/browser_progress_stream.dart'
+    if (dart.library.html) 'progress_stream/browser_progress_stream.dart';
 import 'response.dart';
 import 'response/response_stream_handler.dart';
 import 'transformer.dart';
-import 'transformers/background_transformer.dart';
-
-import 'progress_stream/io_progress_stream.dart'
-    if (dart.library.html) 'progress_stream/browser_progress_stream.dart';
 
 part 'interceptor.dart';
 
@@ -41,8 +41,15 @@ abstract class DioMixin implements Dio {
 
   /// The default [Transformer] that transfers requests and responses
   /// into corresponding content to send.
+  /// For response bodies greater than 50KB, a new Isolate will be spawned to
+  /// decode the response body to JSON.
+  /// Taken from https://github.com/flutter/flutter/blob/135454af32477f815a7525073027a3ff9eff1bfd/packages/flutter/lib/src/services/asset_bundle.dart#L87-L93
+  /// 50 KB of data should take 2-3 ms to parse on a Moto G4, and about 400 μs
+  /// on a Pixel 4.
   @override
-  Transformer transformer = BackgroundTransformer();
+  Transformer transformer = FusedTransformer(
+    contentLengthIsolateThreshold: 50 * 1024,
+  );
 
   bool _closed = false;
 
@@ -279,6 +286,7 @@ abstract class DioMixin implements Dio {
     ProgressCallback? onReceiveProgress,
     CancelToken? cancelToken,
     bool deleteOnError = true,
+    FileAccessMode fileAccessMode = FileAccessMode.write,
     String lengthHeader = Headers.contentLengthHeader,
     Object? data,
     Options? options,
@@ -291,6 +299,7 @@ abstract class DioMixin implements Dio {
       deleteOnError: deleteOnError,
       cancelToken: cancelToken,
       data: data,
+      fileAccessMode: fileAccessMode,
       options: options,
     );
   }
@@ -303,6 +312,7 @@ abstract class DioMixin implements Dio {
     Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
     bool deleteOnError = true,
+    FileAccessMode fileAccessMode = FileAccessMode.write,
     String lengthHeader = Headers.contentLengthHeader,
     Object? data,
     Options? options,
@@ -338,7 +348,11 @@ abstract class DioMixin implements Dio {
     Options? options,
     ProgressCallback? onSendProgress,
     ProgressCallback? onReceiveProgress,
-  }) {
+  }) async {
+    if (cancelToken != null && cancelToken.isCancelled) {
+      throw cancelToken.cancelError!;
+    }
+
     final requestOptions = (options ?? Options()).compose(
       this.options,
       path,
@@ -514,11 +528,18 @@ abstract class DioMixin implements Dio {
     final cancelToken = reqOpt.cancelToken;
     try {
       final stream = await _transformData(reqOpt);
-      final responseBody = await httpClientAdapter.fetch(
-        reqOpt,
-        stream,
-        cancelToken?.whenCancel,
+      final operation = CancelableOperation.fromFuture(
+        httpClientAdapter.fetch(
+          reqOpt,
+          stream,
+          cancelToken?.whenCancel,
+        ),
       );
+      final operationWeakReference = WeakReference(operation);
+      cancelToken?.whenCancel.whenComplete(() {
+        operationWeakReference.target?.cancel();
+      });
+      final responseBody = await operation.value;
       final headers = Headers.fromMap(
         responseBody.headers,
         preserveHeaderCase: reqOpt.preserveHeaderCase,
@@ -739,6 +760,21 @@ abstract class DioMixin implements Dio {
       );
     }
     return response;
+  }
+
+  @override
+  Dio clone({
+    BaseOptions? options,
+    Interceptors? interceptors,
+    HttpClientAdapter? httpClientAdapter,
+    Transformer? transformer,
+  }) {
+    final dio = Dio(options ?? this.options);
+    dio.interceptors.removeImplyContentTypeInterceptor();
+    dio.interceptors.addAll(interceptors ?? this.interceptors);
+    dio.httpClientAdapter = httpClientAdapter ?? this.httpClientAdapter;
+    dio.transformer = transformer ?? this.transformer;
+    return dio;
   }
 }
 

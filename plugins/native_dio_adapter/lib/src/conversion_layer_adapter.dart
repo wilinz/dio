@@ -1,6 +1,6 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:async' show Completer;
+import 'dart:convert' show ByteConversionSink;
+import 'dart:typed_data' show Uint8List;
 
 import 'package:dio/dio.dart';
 import 'package:http/http.dart';
@@ -12,9 +12,10 @@ import 'package:http/http.dart';
 /// to a minimum. Since `CupertinoClient` and `CronetClient` depend anyway on
 /// `http` this also doesn't add any additional dependency.
 class ConversionLayerAdapter implements HttpClientAdapter {
-  final Client client;
-
   ConversionLayerAdapter(this.client);
+
+  /// The underlying http client.
+  final Client client;
 
   @override
   Future<ResponseBody> fetch(
@@ -22,7 +23,11 @@ class ConversionLayerAdapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<dynamic>? cancelFuture,
   ) async {
-    final request = await _fromOptionsAndStream(options, requestStream);
+    final request = await _fromOptionsAndStream(
+      options,
+      requestStream,
+      cancelFuture,
+    );
     final response = await client.send(request);
     return response.toDioResponseBody(options);
   }
@@ -33,10 +38,12 @@ class ConversionLayerAdapter implements HttpClientAdapter {
   Future<BaseRequest> _fromOptionsAndStream(
     RequestOptions options,
     Stream<Uint8List>? requestStream,
+    Future<dynamic>? cancelFuture,
   ) async {
-    final request = Request(
+    final request = AbortableRequest(
       options.method,
       options.uri,
+      abortTrigger: cancelFuture,
     );
 
     request.headers.addAll(

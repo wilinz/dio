@@ -1,8 +1,9 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:dio_test/util.dart';
 import 'package:test/test.dart';
+
+import '../../util.dart';
 
 void basicTests(
   Dio Function(String baseUrl) create,
@@ -16,10 +17,7 @@ void basicTests(
   group('basic request', () {
     test(
       'works with non-TLS requests',
-      () async {
-        await dio.get('http://flutter.cn/');
-        await dio.get('https://flutter.cn/non-exist-destination');
-      },
+      () => dio.get('http://flutter-io.cn/'),
       testOn: 'vm',
     );
 

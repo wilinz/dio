@@ -16,12 +16,14 @@ ide:
 command:
   bootstrap:
     runPubGetInParallel: false
+    hooks:
+      # Check bootstrappable packages.
+      pre: |
+        dart ./scripts/melos_packages.dart
   clean:
     hooks:
+      # Clean all coverage files
       post: |
-        # Clean all flutter projects
-        melos exec --flutter -- "flutter clean"
-        # Clean coverage files
         rm -rf coverage
         rm -rf pubspec.lock
         melos exec --dir-exists coverage -- "rm -rf coverage"
@@ -57,11 +59,18 @@ scripts:
       melos run test:flutter
   test:vm:
     name: Dart VM tests
-    exec: dart test --preset ${TEST_PRESET:-default} --coverage coverage/vm --chain-stack-traces
+    exec: |
+      if [ "$TARGET_DART_SDK" = "min" ]; then
+        dart test --preset=${TEST_PRESET:-default},${TARGET_DART_SDK:-stable} --chain-stack-traces
+      else
+        dart test --preset=${TEST_PRESET:-default},${TARGET_DART_SDK:-stable} --coverage=coverage/vm --chain-stack-traces
+      fi
     packageFilters:
       flutter: false
       dirExists: test
       fileExists: .melos_package
+      ignore:
+        - 'dio_web_adapter'
   test:web:
     name: Dart Web tests
     run: |
@@ -72,14 +81,24 @@ scripts:
     run: melos run test:web:single
     env:
       TEST_PLATFORM: chrome
+      WITH_WASM: true
   test:web:firefox:
     name: Dart Web tests in firefox
     run: melos run test:web:single
     env:
       TEST_PLATFORM: firefox
+      WITH_WASM: false
   test:web:single:
     name: Dart Web tests in a browser
-    exec: dart test --platform ${TEST_PLATFORM} --coverage coverage/${TEST_PLATFORM} --preset ${TEST_PRESET:-default} --chain-stack-traces
+    exec: |
+      if [ "$TARGET_DART_SDK" = "min" ]; then
+        dart test --platform ${TEST_PLATFORM} --preset=${TEST_PRESET:-default},${TARGET_DART_SDK:-stable} --chain-stack-traces
+      else
+        dart test --platform ${TEST_PLATFORM} --coverage=coverage/${TEST_PLATFORM} --preset=${TEST_PRESET:-default},${TARGET_DART_SDK:-stable} --chain-stack-traces
+        if [ "$WITH_WASM" = "true" ]; then
+          dart test --platform ${TEST_PLATFORM} --coverage=coverage/${TEST_PLATFORM} --preset=${TEST_PRESET:-default},${TARGET_DART_SDK:-stable} --chain-stack-traces --compiler=dart2wasm
+        fi
+      fi
     packageFilters:
       flutter: false
       dirExists: test
@@ -103,11 +122,24 @@ scripts:
       melos run coverage:format
       melos run coverage:show
 
+  upgrade:dart:
+    name: Upgrade Dart package deps
+    exec: dart pub upgrade
+    packageFilters:
+      flutter: false
+  upgrade:flutter:
+    name: Upgrade Flutter package deps
+    exec: flutter pub upgrade
+    packageFilters:
+      flutter: true
   build:example:apk:
     run: |
       cd example_flutter_app
       flutter build apk --debug
 
+  coverage:clean:
+    name: Clear coverage
+    exec: rm -rf coverage
   coverage:format:
     name: Format coverage
     run: |
