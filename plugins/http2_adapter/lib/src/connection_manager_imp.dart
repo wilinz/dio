@@ -180,6 +180,25 @@ class _ConnectionManager implements ConnectionManager {
       return socket;
     }
 
+    // 魔改：SOCKS5 代理分支（用于本地 hy2 隧道，避免 HTTP CONNECT 多一个 RTT）。
+    // proxy = socks5://user:pass@127.0.0.1:port
+    // 走原始 SOCKS5（用户名/密码鉴权 + ATYP=域名，让代理端做 DNS），
+    // 然后在裸 socket 上直接做 TLS + h2 ALPN，实现 h2 多路复用过隧道。
+    if (proxy.scheme == 'socks5') {
+      final (raw, sub) = await _connectViaSocks5(proxy, target, timeout);
+      // 与包内 HTTP CONNECT 分支一致：secure() 后再 cancel 握手订阅。
+      final socket = await SecureSocket.secure(
+        raw,
+        host: target.host,
+        context: clientConfig.context,
+        onBadCertificate: clientConfig.onBadCertificate,
+        supportedProtocols: ['h2'],
+      );
+      _throwIfH2NotSelected(target, socket);
+      sub.cancel();
+      return socket;
+    }
+
     final proxySocket = await Socket.connect(
       proxy.host,
       proxy.port,
@@ -258,6 +277,108 @@ class _ConnectionManager implements ConnectionManager {
     proxySubscription.cancel();
 
     return socket;
+  }
+
+  /// 魔改：通过 SOCKS5 代理（用户名/密码鉴权）建立到 [target] 的裸 TCP 连接。
+  /// 用 ATYP=域名，让代理端解析 DNS（适配走隧道访问校内域名）。
+  /// 返回 (socket, subscription)：socket 尚未加密，subscription 已在监听握手，
+  /// 必须由调用方原样传给 SecureSocket.secure 接管，不能 cancel。
+  Future<(Socket, StreamSubscription<Uint8List>)> _connectViaSocks5(
+    Uri proxy,
+    Uri target,
+    Duration? timeout,
+  ) async {
+    final socket = await Socket.connect(proxy.host, proxy.port, timeout: timeout);
+    try {
+      socket.setOption(SocketOption.tcpNoDelay, true);
+
+      final buffer = BytesBuilder();
+      int needed = 0;
+      Completer<void>? waiter;
+      final sub = socket.listen(
+        (data) {
+          buffer.add(data);
+          final w = waiter;
+          if (w != null && !w.isCompleted && buffer.length >= needed) {
+            w.complete();
+          }
+        },
+        onError: (Object e, StackTrace s) {
+          final w = waiter;
+          if (w != null && !w.isCompleted) w.completeError(e, s);
+        },
+        onDone: () {
+          final w = waiter;
+          if (w != null && !w.isCompleted) {
+            w.completeError(const SocketException('SOCKS5: closed early'));
+          }
+        },
+      );
+
+      Future<List<int>> readExact(int n) async {
+        if (buffer.length < n) {
+          needed = n;
+          waiter = Completer<void>();
+          await waiter!.future;
+          waiter = null;
+        }
+        final all = buffer.takeBytes();
+        final out = all.sublist(0, n);
+        if (all.length > n) buffer.add(all.sublist(n));
+        return out;
+      }
+
+      // 1) greeting：VER=5，提供两种方法 0x00(无认证) 与 0x02(用户名/密码)
+      socket.add([0x05, 0x02, 0x00, 0x02]);
+      final sel = await readExact(2);
+      if (sel[0] != 0x05) {
+        throw SocketException('SOCKS5: bad version in method-select: $sel');
+      }
+
+      // 2) 按服务端选择的方法走鉴权
+      if (sel[1] == 0x02) {
+        // 用户名/密码鉴权（RFC1929）
+        final userInfo = proxy.userInfo.split(':');
+        final user = utf8.encode(userInfo.isNotEmpty ? userInfo[0] : '');
+        final pass = utf8.encode(userInfo.length > 1 ? userInfo[1] : '');
+        socket.add([0x01, user.length, ...user, pass.length, ...pass]);
+        final authResp = await readExact(2);
+        if (authResp[1] != 0x00) {
+          throw SocketException('SOCKS5: auth failed: $authResp');
+        }
+      } else if (sel[1] != 0x00) {
+        throw SocketException('SOCKS5: unsupported auth method: ${sel[1]}');
+      }
+
+      // 3) CONNECT，ATYP=域名（让代理解析 DNS）
+      final host = utf8.encode(target.host);
+      final port = target.hasPort
+          ? target.port
+          : (target.scheme == 'https' ? 443 : 80);
+      socket.add([
+        0x05, 0x01, 0x00, 0x03, host.length, ...host,
+        (port >> 8) & 0xff, port & 0xff,
+      ]);
+      final rep = await readExact(4);
+      if (rep[1] != 0x00) {
+        throw SocketException('SOCKS5: CONNECT failed, REP=${rep[1]}');
+      }
+      // 消费绑定地址（ATYP + addr + 2 字节端口）
+      final atyp = rep[3];
+      final addrLen = atyp == 0x01
+          ? 4
+          : atyp == 0x04
+              ? 16
+              : (await readExact(1))[0];
+      await readExact(addrLen + 2);
+
+      // 握手后服务端在收到 TLS ClientHello 前不会再发数据，buffer 应为空。
+      // 把订阅交还，由 SecureSocket.secure 接管。
+      return (socket, sub);
+    } catch (_) {
+      socket.destroy();
+      rethrow;
+    }
   }
 
   @override
